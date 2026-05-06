@@ -1,0 +1,715 @@
+snake                                                                                                                   PAGE 1
+                         1     ;; ============================================================
+                         2     ;; SNAKE - 8051 Assembly
+                         3     ;; MCU 8051 IDE Simulator
+                         4     ;; Display: 1x LED Matrix 8x8 (Rows=P1, Columns=P0)
+                         5     ;; Input: 4 Tasten an P3.0-P3.3 (aktiv low)
+                         6     ;;   P3.0 = Hoch, P3.1 = Runter, P3.2 = Links, P3.3 = Rechts
+                         7     ;; LED Condition: Row=1, Column=1
+                         8     ;; Dim Interval: 1000
+                         9     ;; ============================================================
+                        10
+                        11     ;; --- Register-Adressen ---
+  0000                  12     AR0         EQU 00h
+  0001                  13     AR1         EQU 01h
+  0002                  14     AR2         EQU 02h
+  0003                  15     AR3         EQU 03h
+  0004                  16     AR4         EQU 04h
+  0005                  17     AR5         EQU 05h
+  0006                  18     AR6         EQU 06h
+  0007                  19     AR7         EQU 07h
+                        20
+                        21     ;; --- RAM-Adressen ---
+  0030                  22     SNAKE_DIR   EQU 30h        ; Richtung: 0=hoch,1=runter,2=links,3=rechts
+  0031                  23     SNAKE_LEN   EQU 31h        ; Aktuelle Laenge
+  0032                  24     SNAKE_HEAD  EQU 32h        ; Index des Kopfes im Ring-Buffer
+  0033                  25     FOOD_POS    EQU 33h        ; Futter-Position (High-Nibble=X, Low-Nibble=Y)
+  0034                  26     GAME_STATE  EQU 34h        ; 0=Warten, 1=Spielen, 2=Game Over
+  0035                  27     RNG_SEED    EQU 35h        ; Zufall
+  0036                  28     FRAME_CNT   EQU 36h        ; Frame-Zaehler
+  0037                  29     MUX_ROW     EQU 37h        ; Aktuelle Multiplex-Zeile
+  0038                  30     MUX_DELAY   EQU 38h        ; Verzoegerung pro Zeile
+  0039                  31     SCORE       EQU 39h        ; Punktestand
+                        32
+                        33     ; Spielfeld: 8 Bytes (1 Byte pro Zeile, Bit=Spalte) - SCHLANGE
+  0040                  34     FIELD       EQU 40h        ; 40h-47h
+                        35
+                        36     ; Futter-Feld: 8 Bytes (1 Byte pro Zeile) - FUTTER
+  005C                  37     FOOD_FIELD  EQU 5Ch        ; 5Ch-63h
+                        38
+                        39     ; Schlangen-Body: Ring-Buffer, max 20 Segmente
+                        40     ; Jedes Byte: High-Nibble=X(0-7), Low-Nibble=Y(0-7)
+  0048                  41     SNAKE_BUF   EQU 48h        ; 48h-5Bh (20 Bytes)
+  0014                  42     SNAKE_MAX   EQU 20         ; Max Schlangenlaenge
+                        43
+                        44     ;; --- Konstanten ---
+  0001                  45     GAME_SPEED  EQU 1           ; Jeder Frame ein Game-Tick (schnellste)
+  000A                  46     MUX_DLY_VAL EQU 10          ; Instruktionen pro Zeile warten
+                        47
+  0000                  48     DIR_UP      EQU 0
+  0001                  49     DIR_DOWN    EQU 1
+  0002                  50     DIR_LEFT    EQU 2
+  0003                  51     DIR_RIGHT   EQU 3
+                        52
+                        53     ;; --- Vektoren ---
+                        54             ORG 0000h
+0000 020030             55             LJMP MAIN
+                        56
+                        57     ;; --- Lookup-Tabelle ---
+                        58             ORG 0020h
+                        59     BIT_TBL:
+0020 0102040810         60             DB 01h, 02h, 04h, 08h, 10h, 20h, 40h, 80h
+     204080
+                        61
+                        62     ;; ============================================================
+                        63     ;; MAIN
+                        64     ;; ============================================================
+                        65             ORG 0030h
+                        66     MAIN:
+0030 758170             67             MOV SP, #70h
+0033 120065             68             LCALL GAME_INIT
+                        69
+                        70     ;; === HAUPTSCHLEIFE ===
+                        71     ;; Zeigt eine Zeile an, wartet, naechste Zeile.
+                        72     ;; Nach 8 Zeilen (1 Frame) -> Frame-Counter erhoehen.
+                        73     ;; Nach GAME_SPEED Frames -> Spiellogik.
+                        74     MAIN_LP:
+0036 120103             75             LCALL READ_INPUT     ; Tasten JEDEN Durchlauf lesen
+0039 1200DD             76             LCALL DISPLAY_ROW
+003C 12005B             77             LCALL MUX_WAIT
+003F 0537               78             INC MUX_ROW
+0041 E537               79             MOV A, MUX_ROW
+0043 B408F0             80             CJNE A, #8, MAIN_LP
+0046 753700             81             MOV MUX_ROW, #0
+                        82             ;; Ein Frame fertig
+0049 0536               83             INC FRAME_CNT
+004B E536               84             MOV A, FRAME_CNT
+004D B401E6             85             CJNE A, #GAME_SPEED, MAIN_LP
+0050 753600             86             MOV FRAME_CNT, #0
+                        87             ;; Spiellogik
+0053 12015B             88             LCALL GAME_LOGIC
+0056 12008D             89             LCALL BUILD_FIELD
+0059 80DB               90             SJMP MAIN_LP
+                        91
+                        92     ;; ============================================================
+                        93     ;; MUX_WAIT: Kurze Verzoegerung damit Zeile sichtbar bleibt
+                        94     ;; ============================================================
+                        95     MUX_WAIT:
+005B 7F0A               96             MOV R7, #MUX_DLY_VAL
+005D 00                 97     MW_LP:  NOP
+005E 00                 98             NOP
+005F 00                 99             NOP
+0060 00                100             NOP
+0061 00                101             NOP
+0062 DFF9              102             DJNZ R7, MW_LP
+0064 22                103             RET
+                       104
+                       105     ;; ============================================================
+                       106     ;; GAME_INIT
+                       107     ;; ============================================================
+                       108     GAME_INIT:
+0065 753003            109             MOV SNAKE_DIR, #DIR_RIGHT
+0068 753101            110             MOV SNAKE_LEN, #1
+006B 753200            111             MOV SNAKE_HEAD, #0
+006E 753400            112             MOV GAME_STATE, #0
+0071 7535A7            113             MOV RNG_SEED, #0A7h
+0074 753600            114             MOV FRAME_CNT, #0
+0077 753700            115             MOV MUX_ROW, #0
+007A 753900            116             MOV SCORE, #0
+                       117
+                       118             ;; Schlange initialisieren: 1 Segment in der Mitte
+007D 7848              119             MOV R0, #SNAKE_BUF
+007F 7644              120             MOV @R0, #44h       ; X=4, Y=4
+                       121
+                       122             ;; Futter platzieren
+0081 753366            123             MOV FOOD_POS, #66h   ; X=6, Y=6
+                       124
+                       125             ;; Spielfeld aufbauen
+0084 12008D            126             LCALL BUILD_FIELD
+0087 22                127             RET
+                       128
+                       129     ;; ============================================================
+                       130     ;; BIT_MASK: A = Pos (0-7), return A = (1 << Pos)
+                       131     ;; ============================================================
+                       132     BIT_MASK:
+0088 900020            133             MOV DPTR, #BIT_TBL
+008B 93                134             MOVC A, @A+DPTR
+008C 22                135             RET
+                       136
+                       137     ;; ============================================================
+                       138     ;; BUILD_FIELD: Spielfeld-Array aus Schlange + Futter aufbauen
+                       139     ;; ============================================================
+                       140     BUILD_FIELD:
+                       141             ;; Schlangen-Feld loeschen
+008D 7840              142             MOV R0, #FIELD
+008F 7F08              143             MOV R7, #8
+0091 7600              144     BF_CL:  MOV @R0, #00h
+0093 08                145             INC R0
+0094 DFFB              146             DJNZ R7, BF_CL
+                       147
+                       148             ;; Futter-Feld loeschen
+0096 785C              149             MOV R0, #FOOD_FIELD
+0098 7F08              150             MOV R7, #8
+009A 7600              151     BF_CL2: MOV @R0, #00h
+009C 08                152             INC R0
+009D DFFB              153             DJNZ R7, BF_CL2
+                       154
+                       155             ;; Schlange ins Feld zeichnen
+009F E532              156             MOV A, SNAKE_HEAD
+00A1 C3                157             CLR C
+00A2 9531              158             SUBB A, SNAKE_LEN
+00A4 04                159             INC A
+00A5 30E702            160             JNB ACC.7, BF_IDX_OK
+00A8 2414              161             ADD A, #SNAKE_MAX
+                       162     BF_IDX_OK:
+00AA F9                163             MOV R1, A
+00AB E531              164             MOV A, SNAKE_LEN
+00AD FF                165             MOV R7, A
+                       166
+                       167     BF_DRAW:
+00AE 7448              168             MOV A, #SNAKE_BUF
+00B0 29                169             ADD A, R1
+00B1 F8                170             MOV R0, A
+00B2 E6                171             MOV A, @R0
+00B3 FA                172             MOV R2, A
+00B4 540F              173             ANL A, #0Fh
+00B6 2440              174             ADD A, #FIELD
+00B8 F8                175             MOV R0, A
+00B9 EA                176             MOV A, R2
+00BA C4                177             SWAP A
+00BB 540F              178             ANL A, #0Fh
+00BD 120088            179             LCALL BIT_MASK
+00C0 46                180             ORL A, @R0
+00C1 F6                181             MOV @R0, A
+00C2 09                182             INC R1
+00C3 E9                183             MOV A, R1
+00C4 B41402            184             CJNE A, #SNAKE_MAX, BF_NW
+00C7 7900              185             MOV R1, #0
+00C9 DFE3              186     BF_NW:  DJNZ R7, BF_DRAW
+                       187
+                       188             ;; Futter ins FOOD_FIELD zeichnen
+00CB E533              189             MOV A, FOOD_POS
+00CD FA                190             MOV R2, A
+00CE 540F              191             ANL A, #0Fh
+00D0 245C              192             ADD A, #FOOD_FIELD
+00D2 F8                193             MOV R0, A
+00D3 EA                194             MOV A, R2
+00D4 C4                195             SWAP A
+00D5 540F              196             ANL A, #0Fh
+00D7 120088            197             LCALL BIT_MASK
+00DA 46                198             ORL A, @R0
+00DB F6                199             MOV @R0, A
+                       200
+00DC 22                201             RET
+                       202
+                       203     ;; ============================================================
+                       204     ;; DISPLAY_ROW: Eine Zeile auf die Matrix ausgeben
+                       205     ;; P0 = Columns (Schlange + Futter zusammen), P1 = Row
+                       206     ;; P2 = Futter-Markierung (fuer rote Farbe im IDE-Patch)
+                       207     ;; ============================================================
+                       208     DISPLAY_ROW:
+                       209             ;; Alle aus
+00DD 759000            210             MOV P1, #00h
+00E0 758000            211             MOV P0, #00h
+00E3 75A000            212             MOV P2, #00h
+                       213             ;; Schlangen-Daten laden
+00E6 E537              214             MOV A, MUX_ROW
+00E8 2440              215             ADD A, #FIELD
+00EA F8                216             MOV R0, A
+00EB E6                217             MOV A, @R0
+00EC FA                218             MOV R2, A            ; R2 = Schlange
+                       219             ;; Futter-Daten laden
+00ED E537              220             MOV A, MUX_ROW
+00EF 245C              221             ADD A, #FOOD_FIELD
+00F1 F8                222             MOV R0, A
+00F2 E6                223             MOV A, @R0
+00F3 FB                224             MOV R3, A            ; R3 = Futter
+                       225             ;; P0 = Schlange + Futter (alles sichtbar)
+00F4 EA                226             MOV A, R2
+00F5 4B                227             ORL A, R3
+00F6 F580              228             MOV P0, A
+                       229             ;; P2 = nur Futter (Rot-Markierung)
+00F8 EB                230             MOV A, R3
+00F9 F5A0              231             MOV P2, A
+                       232             ;; Zeile aktivieren
+00FB E537              233             MOV A, MUX_ROW
+00FD 120088            234             LCALL BIT_MASK
+0100 F590              235             MOV P1, A
+0102 22                236             RET
+                       237
+                       238     ;; ============================================================
+                       239     ;; READ_INPUT: Tasten lesen und Richtung setzen
+                       240     ;; ============================================================
+                       241     READ_INPUT:
+                       242             ;; Warte-Modus: beliebige Taste startet
+0103 E534              243             MOV A, GAME_STATE
+0105 700B              244             JNZ RI_PLAY
+                       245
+0107 E5B0              246             MOV A, P3
+0109 44F0              247             ORL A, #0F0h        ; Obere Bits ignorieren
+010B B4FF01            248             CJNE A, #0FFh, RI_START
+010E 22                249             RET
+                       250     RI_START:
+010F 753401            251             MOV GAME_STATE, #1
+                       252
+                       253     RI_PLAY:
+                       254             ;; Game Over: beliebige Taste -> Neustart
+0112 E534              255             MOV A, GAME_STATE
+0114 B4020F            256             CJNE A, #2, RI_DIR
+0117 E5B0              257             MOV A, P3
+0119 44F0              258             ORL A, #0F0h
+011B B4FF01            259             CJNE A, #0FFh, RI_RESTART
+011E 22                260             RET
+                       261     RI_RESTART:
+011F 120065            262             LCALL GAME_INIT
+0122 753401            263             MOV GAME_STATE, #1
+0125 22                264             RET
+                       265
+                       266     RI_DIR:
+                       267             ;; Richtungstasten pruefen (aktiv low)
+0126 30B00A            268             JNB P3.0, RI_UP
+0129 30B111            269             JNB P3.1, RI_DOWN
+012C 30B218            270             JNB P3.2, RI_LEFT
+012F 30B31F            271             JNB P3.3, RI_RIGHT
+0132 22                272             RET
+                       273     RI_UP:
+                       274             ;; Nicht rueckwaerts erlauben
+0133 E530              275             MOV A, SNAKE_DIR
+0135 B40101            276             CJNE A, #DIR_DOWN, RI_UP_OK
+0138 22                277             RET
+                       278     RI_UP_OK:
+0139 753000            279             MOV SNAKE_DIR, #DIR_UP
+013C 22                280             RET
+                       281     RI_DOWN:
+013D E530              282             MOV A, SNAKE_DIR
+013F B40001            283             CJNE A, #DIR_UP, RI_DN_OK
+0142 22                284             RET
+                       285     RI_DN_OK:
+0143 753001            286             MOV SNAKE_DIR, #DIR_DOWN
+0146 22                287             RET
+                       288     RI_LEFT:
+0147 E530              289             MOV A, SNAKE_DIR
+0149 B40301            290             CJNE A, #DIR_RIGHT, RI_LF_OK
+014C 22                291             RET
+                       292     RI_LF_OK:
+014D 753002            293             MOV SNAKE_DIR, #DIR_LEFT
+0150 22                294             RET
+                       295     RI_RIGHT:
+0151 E530              296             MOV A, SNAKE_DIR
+0153 B40201            297             CJNE A, #DIR_LEFT, RI_RT_OK
+0156 22                298             RET
+                       299     RI_RT_OK:
+0157 753003            300             MOV SNAKE_DIR, #DIR_RIGHT
+015A 22                301             RET
+                       302
+                       303     ;; ============================================================
+                       304     ;; GAME_LOGIC: Schlange bewegen, Kollision pruefen
+                       305     ;; ============================================================
+                       306     GAME_LOGIC:
+015B E534              307             MOV A, GAME_STATE
+015D B4017F            308             CJNE A, #1, GLG_RET  ; Nur im Spielzustand
+                       309
+                       310             ;; Kopf-Position holen
+0160 7448              311             MOV A, #SNAKE_BUF
+0162 2532              312             ADD A, SNAKE_HEAD
+0164 F8                313             MOV R0, A
+0165 E6                314             MOV A, @R0           ; A = aktuelle Kopf-XY
+0166 FA                315             MOV R2, A
+                       316             ;; X und Y trennen
+0167 C4                317             SWAP A
+0168 540F              318             ANL A, #0Fh
+016A FB                319             MOV R3, A            ; R3 = X
+016B EA                320             MOV A, R2
+016C 540F              321             ANL A, #0Fh
+016E FC                322             MOV R4, A            ; R4 = Y
+                       323
+                       324             ;; Neue Position berechnen basierend auf Richtung
+016F E530              325             MOV A, SNAKE_DIR
+0171 B40003            326             CJNE A, #DIR_UP, GL_D1
+0174 1C                327             DEC R4               ; Y-1
+0175 800D              328             SJMP GL_MOVED
+0177 B40103            329     GL_D1:  CJNE A, #DIR_DOWN, GL_D2
+017A 0C                330             INC R4               ; Y+1
+017B 8007              331             SJMP GL_MOVED
+017D B40203            332     GL_D2:  CJNE A, #DIR_LEFT, GL_D3
+0180 1B                333             DEC R3               ; X-1
+0181 8001              334             SJMP GL_MOVED
+                       335     GL_D3:  ;; DIR_RIGHT
+0183 0B                336             INC R3               ; X+1
+                       337
+                       338     GL_MOVED:
+                       339             ;; Wand-Kollision pruefen (0-7 Bereich)
+0184 EB                340             MOV A, R3
+0185 54F8              341             ANL A, #0F8h        ; Bits 3-7 gesetzt? -> ausserhalb
+0187 7050              342             JNZ GL_DIE
+0189 EC                343             MOV A, R4
+018A 54F8              344             ANL A, #0F8h
+018C 704B              345             JNZ GL_DIE
+                       346
+                       347             ;; Neue Position zusammenbauen
+018E EB                348             MOV A, R3
+018F C4                349             SWAP A               ; X in High-Nibble
+0190 4C                350             ORL A, R4            ; Y in Low-Nibble
+0191 FD                351             MOV R5, A            ; R5 = neue Position XY
+                       352
+                       353             ;; Selbst-Kollision: Pruefen ob neue Pos in Schlange ist
+0192 E532              354             MOV A, SNAKE_HEAD
+0194 C3                355             CLR C
+0195 9531              356             SUBB A, SNAKE_LEN
+0197 04                357             INC A
+0198 30E702            358             JNB ACC.7, GL_SC_OK
+019B 2414              359             ADD A, #SNAKE_MAX
+                       360     GL_SC_OK:
+019D F9                361             MOV R1, A            ; Start-Index
+019E E531              362             MOV A, SNAKE_LEN
+01A0 FF                363             MOV R7, A
+                       364
+                       365     GL_SC_LP:
+01A1 7448              366             MOV A, #SNAKE_BUF
+01A3 29                367             ADD A, R1
+01A4 F8                368             MOV R0, A
+01A5 E6                369             MOV A, @R0
+01A6 B50502            370             CJNE A, AR5, GL_SC_NX
+                       371             ;; Treffer! Selbst-Kollision
+01A9 802E              372             SJMP GL_DIE
+                       373     GL_SC_NX:
+01AB 09                374             INC R1
+01AC E9                375             MOV A, R1
+01AD B41402            376             CJNE A, #SNAKE_MAX, GL_SC_NW
+01B0 7900              377             MOV R1, #0
+                       378     GL_SC_NW:
+01B2 DFED              379             DJNZ R7, GL_SC_LP
+                       380
+                       381             ;; Neuen Kopf einfuegen
+01B4 E532              382             MOV A, SNAKE_HEAD
+01B6 04                383             INC A
+01B7 B41402            384             CJNE A, #SNAKE_MAX, GL_NH_OK
+01BA 7400              385             MOV A, #0
+                       386     GL_NH_OK:
+01BC F532              387             MOV SNAKE_HEAD, A
+01BE 2448              388             ADD A, #SNAKE_BUF
+01C0 F8                389             MOV R0, A
+01C1 ED                390             MOV A, R5
+01C2 F6                391             MOV @R0, A           ; Neue Kopfposition speichern
+                       392
+                       393             ;; Futter gefressen?
+01C3 ED                394             MOV A, R5
+01C4 B53310            395             CJNE A, FOOD_POS, GL_NO_FOOD
+                       396             ;; Ja! Laenge erhoehen
+01C7 E531              397             MOV A, SNAKE_LEN
+01C9 B41402            398             CJNE A, #SNAKE_MAX, GL_GROW
+01CC 8004              399             SJMP GL_NEW_FOOD     ; Max erreicht, nicht wachsen
+                       400     GL_GROW:
+01CE 0531              401             INC SNAKE_LEN
+01D0 0539              402             INC SCORE
+                       403     GL_NEW_FOOD:
+01D2 1201E0            404             LCALL PLACE_FOOD
+01D5 8008              405             SJMP GLG_RET
+                       406
+                       407     GL_NO_FOOD:
+                       408             ;; Kein Futter -> Schlange bleibt gleich lang (Schwanz wird nicht behalten)
+                       409             ;; (der Ring-Buffer regelt das automatisch ueber SNAKE_LEN)
+01D7 8006              410             SJMP GLG_RET
+                       411
+                       412     GL_DIE:
+01D9 120065            413             LCALL GAME_INIT
+01DC 753401            414             MOV GAME_STATE, #1   ; Sofort weiterspielen
+                       415     GLG_RET:
+01DF 22                416             RET
+                       417
+                       418     ;; ============================================================
+                       419     ;; PLACE_FOOD: Neues Futter an zufaelliger Position
+                       420     ;; ============================================================
+                       421     PLACE_FOOD:
+01E0 1201F4            422             LCALL RANDOM
+01E3 E535              423             MOV A, RNG_SEED
+01E5 5477              424             ANL A, #77h          ; X=0-7 (High), Y=0-7 (Low)
+                       425             ;; Sicherstellen dass Nibbles < 8
+01E7 FA                426             MOV R2, A
+01E8 C4                427             SWAP A
+01E9 5407              428             ANL A, #07h          ; X begrenzen
+01EB C4                429             SWAP A
+01EC FB                430             MOV R3, A
+01ED EA                431             MOV A, R2
+01EE 5407              432             ANL A, #07h          ; Y begrenzen
+01F0 4B                433             ORL A, R3
+01F1 F533              434             MOV FOOD_POS, A
+01F3 22                435             RET
+                       436
+                       437     ;; ============================================================
+                       438     ;; RANDOM (LFSR 8-Bit)
+                       439     ;; ============================================================
+                       440     RANDOM:
+01F4 E535              441             MOV A, RNG_SEED
+01F6 A2E7              442             MOV C, ACC.7
+01F8 30E501            443             JNB ACC.5, RN1
+01FB B3                444             CPL C
+01FC 30E401            445     RN1:    JNB ACC.4, RN2
+01FF B3                446             CPL C
+0200 30E301            447     RN2:    JNB ACC.3, RN3
+0203 B3                448             CPL C
+0204 33                449     RN3:    RLC A
+0205 F535              450             MOV RNG_SEED, A
+0207 22                451             RET
+                       452
+                       453     ;; ============================================================
+                       454             END
+ASSEMBLY COMPLETE, NO ERRORS FOUND, NO WARNINGS
+
+
+SYMBOL TABLE:
+??MCU_8051_IDE . . . . . . . . . . .  N  NUMB  8051H  NOT USED
+??VERSION. . . . . . . . . . . . . .  N  NUMB  0149H  NOT USED
+AC . . . . . . . . . . . . . . . . .  B  ADDR  00D6H  NOT USED
+ACC. . . . . . . . . . . . . . . . .  D  ADDR  00E0H
+ACSR . . . . . . . . . . . . . . . .  D  ADDR  0097H  NOT USED
+ADCF . . . . . . . . . . . . . . . .  D  ADDR  00F6H  NOT USED
+ADCLK. . . . . . . . . . . . . . . .  D  ADDR  00F2H  NOT USED
+ADCON. . . . . . . . . . . . . . . .  D  ADDR  00F3H  NOT USED
+ADDH . . . . . . . . . . . . . . . .  D  ADDR  00F5H  NOT USED
+ADDL . . . . . . . . . . . . . . . .  D  ADDR  00F4H  NOT USED
+AR0. . . . . . . . . . . . . . . . .  N  NUMB  0000H  NOT USED
+AR1. . . . . . . . . . . . . . . . .  N  NUMB  0001H  NOT USED
+AR2. . . . . . . . . . . . . . . . .  N  NUMB  0002H  NOT USED
+AR3. . . . . . . . . . . . . . . . .  N  NUMB  0003H  NOT USED
+AR4. . . . . . . . . . . . . . . . .  N  NUMB  0004H  NOT USED
+AR5. . . . . . . . . . . . . . . . .  N  NUMB  0005H
+AR6. . . . . . . . . . . . . . . . .  N  NUMB  0006H  NOT USED
+AR7. . . . . . . . . . . . . . . . .  N  NUMB  0007H  NOT USED
+AUXR . . . . . . . . . . . . . . . .  D  ADDR  008EH  NOT USED
+AUXR1. . . . . . . . . . . . . . . .  D  ADDR  00A2H  NOT USED
+B. . . . . . . . . . . . . . . . . .  D  ADDR  00F0H  NOT USED
+BDRCON . . . . . . . . . . . . . . .  D  ADDR  009BH  NOT USED
+BDRCON_1 . . . . . . . . . . . . . .  D  ADDR  009CH  NOT USED
+BF_CL. . . . . . . . . . . . . . . .  C  ADDR  0091H
+BF_CL2 . . . . . . . . . . . . . . .  C  ADDR  009AH
+BF_DRAW. . . . . . . . . . . . . . .  C  ADDR  00AEH
+BF_IDX_OK. . . . . . . . . . . . . .  C  ADDR  00AAH
+BF_NW. . . . . . . . . . . . . . . .  C  ADDR  00C9H
+BIT_MASK . . . . . . . . . . . . . .  C  ADDR  0088H
+BIT_TBL. . . . . . . . . . . . . . .  C  ADDR  0020H
+BRL. . . . . . . . . . . . . . . . .  D  ADDR  009AH  NOT USED
+BUILD_FIELD. . . . . . . . . . . . .  C  ADDR  008DH
+CCAP0H . . . . . . . . . . . . . . .  D  ADDR  00FAH  NOT USED
+CCAP0L . . . . . . . . . . . . . . .  D  ADDR  00EAH  NOT USED
+CCAP1H . . . . . . . . . . . . . . .  D  ADDR  00FBH  NOT USED
+CCAP1L . . . . . . . . . . . . . . .  D  ADDR  00EBH  NOT USED
+CCAP2H . . . . . . . . . . . . . . .  D  ADDR  00FCH  NOT USED
+CCAP3H . . . . . . . . . . . . . . .  D  ADDR  00FDH  NOT USED
+CCAP4H . . . . . . . . . . . . . . .  D  ADDR  00FEH  NOT USED
+CCAPL2H. . . . . . . . . . . . . . .  D  ADDR  00FCH  NOT USED
+CCAPL2L. . . . . . . . . . . . . . .  D  ADDR  00ECH  NOT USED
+CCAPL3H. . . . . . . . . . . . . . .  D  ADDR  00FDH  NOT USED
+CCAPL3L. . . . . . . . . . . . . . .  D  ADDR  00EDH  NOT USED
+CCAPL4H. . . . . . . . . . . . . . .  D  ADDR  00FEH  NOT USED
+CCAPL4L. . . . . . . . . . . . . . .  D  ADDR  00EEH  NOT USED
+CCAPM0 . . . . . . . . . . . . . . .  D  ADDR  00DAH  NOT USED
+CCAPM1 . . . . . . . . . . . . . . .  D  ADDR  00DBH  NOT USED
+CCAPM2 . . . . . . . . . . . . . . .  D  ADDR  00DCH  NOT USED
+CCAPM3 . . . . . . . . . . . . . . .  D  ADDR  00DDH  NOT USED
+CCAPM4 . . . . . . . . . . . . . . .  D  ADDR  00DEH  NOT USED
+CCF0 . . . . . . . . . . . . . . . .  B  ADDR  00D8H  NOT USED
+CCF1 . . . . . . . . . . . . . . . .  B  ADDR  00D9H  NOT USED
+CCF2 . . . . . . . . . . . . . . . .  B  ADDR  00DAH  NOT USED
+CCF3 . . . . . . . . . . . . . . . .  B  ADDR  00DBH  NOT USED
+CCF4 . . . . . . . . . . . . . . . .  B  ADDR  00DCH  NOT USED
+CCON . . . . . . . . . . . . . . . .  D  ADDR  00D8H  NOT USED
+CFINT. . . . . . . . . . . . . . . .  C  ADDR  0033H  NOT USED
+CH . . . . . . . . . . . . . . . . .  D  ADDR  00F9H  NOT USED
+CKCON. . . . . . . . . . . . . . . .  D  ADDR  008FH  NOT USED
+CKCON0 . . . . . . . . . . . . . . .  D  ADDR  008FH  NOT USED
+CKRL . . . . . . . . . . . . . . . .  D  ADDR  0097H  NOT USED
+CKSEL. . . . . . . . . . . . . . . .  D  ADDR  0085H  NOT USED
+CL . . . . . . . . . . . . . . . . .  D  ADDR  00E9H  NOT USED
+CLKREG . . . . . . . . . . . . . . .  D  ADDR  008FH  NOT USED
+CMOD . . . . . . . . . . . . . . . .  D  ADDR  00D9H  NOT USED
+CPRL2. . . . . . . . . . . . . . . .  B  ADDR  00C8H  NOT USED
+CR . . . . . . . . . . . . . . . . .  B  ADDR  00DEH  NOT USED
+CT2. . . . . . . . . . . . . . . . .  B  ADDR  00C9H  NOT USED
+CY . . . . . . . . . . . . . . . . .  B  ADDR  00D7H  NOT USED
+DIR_DOWN . . . . . . . . . . . . . .  N  NUMB  0001H
+DIR_LEFT . . . . . . . . . . . . . .  N  NUMB  0002H
+DIR_RIGHT. . . . . . . . . . . . . .  N  NUMB  0003H
+DIR_UP . . . . . . . . . . . . . . .  N  NUMB  0000H
+DISPLAY_ROW. . . . . . . . . . . . .  C  ADDR  00DDH
+DP0H . . . . . . . . . . . . . . . .  D  ADDR  0083H  NOT USED
+DP0L . . . . . . . . . . . . . . . .  D  ADDR  0082H  NOT USED
+DP1H . . . . . . . . . . . . . . . .  D  ADDR  0085H  NOT USED
+DP1L . . . . . . . . . . . . . . . .  D  ADDR  0084H  NOT USED
+DPH. . . . . . . . . . . . . . . . .  D  ADDR  0083H  NOT USED
+DPL. . . . . . . . . . . . . . . . .  D  ADDR  0082H  NOT USED
+EA . . . . . . . . . . . . . . . . .  B  ADDR  00AFH  NOT USED
+EC . . . . . . . . . . . . . . . . .  B  ADDR  00AEH  NOT USED
+EECON. . . . . . . . . . . . . . . .  D  ADDR  0096H  NOT USED
+ES . . . . . . . . . . . . . . . . .  B  ADDR  00ACH  NOT USED
+ET0. . . . . . . . . . . . . . . . .  B  ADDR  00A9H  NOT USED
+ET1. . . . . . . . . . . . . . . . .  B  ADDR  00ABH  NOT USED
+ET2. . . . . . . . . . . . . . . . .  B  ADDR  00ADH  NOT USED
+EX0. . . . . . . . . . . . . . . . .  B  ADDR  00A8H  NOT USED
+EX1. . . . . . . . . . . . . . . . .  B  ADDR  00AAH  NOT USED
+EXEN2. . . . . . . . . . . . . . . .  B  ADDR  00CBH  NOT USED
+EXF2 . . . . . . . . . . . . . . . .  B  ADDR  00CEH  NOT USED
+EXTI0. . . . . . . . . . . . . . . .  C  ADDR  0003H  NOT USED
+EXTI1. . . . . . . . . . . . . . . .  C  ADDR  0013H  NOT USED
+F0 . . . . . . . . . . . . . . . . .  B  ADDR  00D5H  NOT USED
+FE . . . . . . . . . . . . . . . . .  B  ADDR  009FH  NOT USED
+FIELD. . . . . . . . . . . . . . . .  N  NUMB  0040H
+FOOD_FIELD . . . . . . . . . . . . .  N  NUMB  005CH
+FOOD_POS . . . . . . . . . . . . . .  N  NUMB  0033H
+FRAME_CNT. . . . . . . . . . . . . .  N  NUMB  0036H
+GAME_INIT. . . . . . . . . . . . . .  C  ADDR  0065H
+GAME_LOGIC . . . . . . . . . . . . .  C  ADDR  015BH
+GAME_SPEED . . . . . . . . . . . . .  N  NUMB  0001H
+GAME_STATE . . . . . . . . . . . . .  N  NUMB  0034H
+GLG_RET. . . . . . . . . . . . . . .  C  ADDR  01DFH
+GL_D1. . . . . . . . . . . . . . . .  C  ADDR  0177H
+GL_D2. . . . . . . . . . . . . . . .  C  ADDR  017DH
+GL_D3. . . . . . . . . . . . . . . .  C  ADDR  0183H
+GL_DIE . . . . . . . . . . . . . . .  C  ADDR  01D9H
+GL_GROW. . . . . . . . . . . . . . .  C  ADDR  01CEH
+GL_MOVED . . . . . . . . . . . . . .  C  ADDR  0184H
+GL_NEW_FOOD. . . . . . . . . . . . .  C  ADDR  01D2H
+GL_NH_OK . . . . . . . . . . . . . .  C  ADDR  01BCH
+GL_NO_FOOD . . . . . . . . . . . . .  C  ADDR  01D7H
+GL_SC_LP . . . . . . . . . . . . . .  C  ADDR  01A1H
+GL_SC_NW . . . . . . . . . . . . . .  C  ADDR  01B2H
+GL_SC_NX . . . . . . . . . . . . . .  C  ADDR  01ABH
+GL_SC_OK . . . . . . . . . . . . . .  C  ADDR  019DH
+IE . . . . . . . . . . . . . . . . .  D  ADDR  00A8H  NOT USED
+IE0. . . . . . . . . . . . . . . . .  B  ADDR  0089H  NOT USED
+IE1. . . . . . . . . . . . . . . . .  B  ADDR  008BH  NOT USED
+INT0 . . . . . . . . . . . . . . . .  B  ADDR  00B2H  NOT USED
+INT1 . . . . . . . . . . . . . . . .  B  ADDR  00B3H  NOT USED
+IP . . . . . . . . . . . . . . . . .  D  ADDR  00B8H  NOT USED
+IPH. . . . . . . . . . . . . . . . .  D  ADDR  00B7H  NOT USED
+IPH0 . . . . . . . . . . . . . . . .  D  ADDR  00B7H  NOT USED
+IPH1 . . . . . . . . . . . . . . . .  D  ADDR  00B3H  NOT USED
+IPL0 . . . . . . . . . . . . . . . .  D  ADDR  00B8H  NOT USED
+IPL1 . . . . . . . . . . . . . . . .  D  ADDR  00B2H  NOT USED
+IT0. . . . . . . . . . . . . . . . .  B  ADDR  0088H  NOT USED
+IT1. . . . . . . . . . . . . . . . .  B  ADDR  008AH  NOT USED
+KBE. . . . . . . . . . . . . . . . .  D  ADDR  009DH  NOT USED
+KBF. . . . . . . . . . . . . . . . .  D  ADDR  009EH  NOT USED
+KBLS . . . . . . . . . . . . . . . .  D  ADDR  009CH  NOT USED
+MAIN . . . . . . . . . . . . . . . .  C  ADDR  0030H
+MAIN_LP. . . . . . . . . . . . . . .  C  ADDR  0036H
+MUX_DELAY. . . . . . . . . . . . . .  N  NUMB  0038H  NOT USED
+MUX_DLY_VAL. . . . . . . . . . . . .  N  NUMB  000AH
+MUX_ROW. . . . . . . . . . . . . . .  N  NUMB  0037H
+MUX_WAIT . . . . . . . . . . . . . .  C  ADDR  005BH
+MW_LP. . . . . . . . . . . . . . . .  C  ADDR  005DH
+OSCCON . . . . . . . . . . . . . . .  D  ADDR  0086H  NOT USED
+OV . . . . . . . . . . . . . . . . .  B  ADDR  00D2H  NOT USED
+P. . . . . . . . . . . . . . . . . .  B  ADDR  00D0H  NOT USED
+P0 . . . . . . . . . . . . . . . . .  D  ADDR  0080H
+P1 . . . . . . . . . . . . . . . . .  D  ADDR  0090H
+P1M1 . . . . . . . . . . . . . . . .  D  ADDR  00D4H  NOT USED
+P1M2 . . . . . . . . . . . . . . . .  D  ADDR  00E2H  NOT USED
+P2 . . . . . . . . . . . . . . . . .  D  ADDR  00A0H
+P3 . . . . . . . . . . . . . . . . .  D  ADDR  00B0H
+P3M1 . . . . . . . . . . . . . . . .  D  ADDR  00D5H  NOT USED
+P3M2 . . . . . . . . . . . . . . . .  D  ADDR  00E3H  NOT USED
+P4 . . . . . . . . . . . . . . . . .  D  ADDR  00C0H  NOT USED
+P4M1 . . . . . . . . . . . . . . . .  D  ADDR  00D6H  NOT USED
+P4M2 . . . . . . . . . . . . . . . .  D  ADDR  00E4H  NOT USED
+P5 . . . . . . . . . . . . . . . . .  D  ADDR  00E8H  NOT USED
+PC . . . . . . . . . . . . . . . . .  B  ADDR  00BEH  NOT USED
+PCON . . . . . . . . . . . . . . . .  D  ADDR  0087H  NOT USED
+PLACE_FOOD . . . . . . . . . . . . .  C  ADDR  01E0H
+PPCL . . . . . . . . . . . . . . . .  B  ADDR  00BEH  NOT USED
+PS . . . . . . . . . . . . . . . . .  B  ADDR  00BCH  NOT USED
+PSL. . . . . . . . . . . . . . . . .  B  ADDR  00BCH  NOT USED
+PSW. . . . . . . . . . . . . . . . .  D  ADDR  00D0H  NOT USED
+PT0. . . . . . . . . . . . . . . . .  B  ADDR  00B9H  NOT USED
+PT0L . . . . . . . . . . . . . . . .  B  ADDR  00B9H  NOT USED
+PT1. . . . . . . . . . . . . . . . .  B  ADDR  00BBH  NOT USED
+PT1L . . . . . . . . . . . . . . . .  B  ADDR  00BBH  NOT USED
+PT2. . . . . . . . . . . . . . . . .  B  ADDR  00BDH  NOT USED
+PT2L . . . . . . . . . . . . . . . .  B  ADDR  00BDH  NOT USED
+PX0. . . . . . . . . . . . . . . . .  B  ADDR  00B8H  NOT USED
+PX0L . . . . . . . . . . . . . . . .  B  ADDR  00B8H  NOT USED
+PX1. . . . . . . . . . . . . . . . .  B  ADDR  00BAH  NOT USED
+PX1L . . . . . . . . . . . . . . . .  B  ADDR  00BAH  NOT USED
+RANDOM . . . . . . . . . . . . . . .  C  ADDR  01F4H
+RB8. . . . . . . . . . . . . . . . .  B  ADDR  009AH  NOT USED
+RCAP2H . . . . . . . . . . . . . . .  D  ADDR  00CBH  NOT USED
+RCAP2L . . . . . . . . . . . . . . .  D  ADDR  00CAH  NOT USED
+RCLK . . . . . . . . . . . . . . . .  B  ADDR  00CDH  NOT USED
+RD . . . . . . . . . . . . . . . . .  B  ADDR  00B7H  NOT USED
+READ_INPUT . . . . . . . . . . . . .  C  ADDR  0103H
+REN. . . . . . . . . . . . . . . . .  B  ADDR  009CH  NOT USED
+RESET. . . . . . . . . . . . . . . .  C  ADDR  0000H  NOT USED
+RI . . . . . . . . . . . . . . . . .  B  ADDR  0098H  NOT USED
+RI_DIR . . . . . . . . . . . . . . .  C  ADDR  0126H
+RI_DN_OK . . . . . . . . . . . . . .  C  ADDR  0143H
+RI_DOWN. . . . . . . . . . . . . . .  C  ADDR  013DH
+RI_LEFT. . . . . . . . . . . . . . .  C  ADDR  0147H
+RI_LF_OK . . . . . . . . . . . . . .  C  ADDR  014DH
+RI_PLAY. . . . . . . . . . . . . . .  C  ADDR  0112H
+RI_RESTART . . . . . . . . . . . . .  C  ADDR  011FH
+RI_RIGHT . . . . . . . . . . . . . .  C  ADDR  0151H
+RI_RT_OK . . . . . . . . . . . . . .  C  ADDR  0157H
+RI_START . . . . . . . . . . . . . .  C  ADDR  010FH
+RI_UP. . . . . . . . . . . . . . . .  C  ADDR  0133H
+RI_UP_OK . . . . . . . . . . . . . .  C  ADDR  0139H
+RN1. . . . . . . . . . . . . . . . .  C  ADDR  01FCH
+RN2. . . . . . . . . . . . . . . . .  C  ADDR  0200H
+RN3. . . . . . . . . . . . . . . . .  C  ADDR  0204H
+RNG_SEED . . . . . . . . . . . . . .  N  NUMB  0035H
+RS0. . . . . . . . . . . . . . . . .  B  ADDR  00D3H  NOT USED
+RS1. . . . . . . . . . . . . . . . .  B  ADDR  00D4H  NOT USED
+RXD. . . . . . . . . . . . . . . . .  B  ADDR  00B0H  NOT USED
+SADDR. . . . . . . . . . . . . . . .  D  ADDR  00A9H  NOT USED
+SADDR_0. . . . . . . . . . . . . . .  D  ADDR  00A9H  NOT USED
+SADDR_1. . . . . . . . . . . . . . .  D  ADDR  00AAH  NOT USED
+SADEN. . . . . . . . . . . . . . . .  D  ADDR  00B9H  NOT USED
+SADEN_0. . . . . . . . . . . . . . .  D  ADDR  00B9H  NOT USED
+SADEN_1. . . . . . . . . . . . . . .  D  ADDR  00BAH  NOT USED
+SBUF . . . . . . . . . . . . . . . .  D  ADDR  0099H  NOT USED
+SCON . . . . . . . . . . . . . . . .  D  ADDR  0098H  NOT USED
+SCORE. . . . . . . . . . . . . . . .  N  NUMB  0039H
+SINT . . . . . . . . . . . . . . . .  C  ADDR  0023H  NOT USED
+SM0. . . . . . . . . . . . . . . . .  B  ADDR  009FH  NOT USED
+SM1. . . . . . . . . . . . . . . . .  B  ADDR  009EH  NOT USED
+SM2. . . . . . . . . . . . . . . . .  B  ADDR  009DH  NOT USED
+SNAKE_BUF. . . . . . . . . . . . . .  N  NUMB  0048H
+SNAKE_DIR. . . . . . . . . . . . . .  N  NUMB  0030H
+SNAKE_HEAD . . . . . . . . . . . . .  N  NUMB  0032H
+SNAKE_LEN. . . . . . . . . . . . . .  N  NUMB  0031H
+SNAKE_MAX. . . . . . . . . . . . . .  N  NUMB  0014H
+SP . . . . . . . . . . . . . . . . .  D  ADDR  0081H
+SPCON. . . . . . . . . . . . . . . .  D  ADDR  00C3H  NOT USED
+SPCR . . . . . . . . . . . . . . . .  D  ADDR  00D5H  NOT USED
+SPDAT. . . . . . . . . . . . . . . .  D  ADDR  00C5H  NOT USED
+SPDR . . . . . . . . . . . . . . . .  D  ADDR  0086H  NOT USED
+SPSR . . . . . . . . . . . . . . . .  D  ADDR  00AAH  NOT USED
+SPSTA. . . . . . . . . . . . . . . .  D  ADDR  00C4H  NOT USED
+T0 . . . . . . . . . . . . . . . . .  B  ADDR  00B4H  NOT USED
+T1 . . . . . . . . . . . . . . . . .  B  ADDR  00B5H  NOT USED
+T2CON. . . . . . . . . . . . . . . .  D  ADDR  00C8H  NOT USED
+T2MOD. . . . . . . . . . . . . . . .  D  ADDR  00C9H  NOT USED
+TB8. . . . . . . . . . . . . . . . .  B  ADDR  009BH  NOT USED
+TCLK . . . . . . . . . . . . . . . .  B  ADDR  00CCH  NOT USED
+TCON . . . . . . . . . . . . . . . .  D  ADDR  0088H  NOT USED
+TF0. . . . . . . . . . . . . . . . .  B  ADDR  008DH  NOT USED
+TF1. . . . . . . . . . . . . . . . .  B  ADDR  008FH  NOT USED
+TF2. . . . . . . . . . . . . . . . .  B  ADDR  00CFH  NOT USED
+TH0. . . . . . . . . . . . . . . . .  D  ADDR  008CH  NOT USED
+TH1. . . . . . . . . . . . . . . . .  D  ADDR  008DH  NOT USED
+TH2. . . . . . . . . . . . . . . . .  D  ADDR  00CDH  NOT USED
+TI . . . . . . . . . . . . . . . . .  B  ADDR  0099H  NOT USED
+TIMER0 . . . . . . . . . . . . . . .  C  ADDR  000BH  NOT USED
+TIMER1 . . . . . . . . . . . . . . .  C  ADDR  001BH  NOT USED
+TIMER2 . . . . . . . . . . . . . . .  C  ADDR  002BH  NOT USED
+TL0. . . . . . . . . . . . . . . . .  D  ADDR  008AH  NOT USED
+TL1. . . . . . . . . . . . . . . . .  D  ADDR  008BH  NOT USED
+TL2. . . . . . . . . . . . . . . . .  D  ADDR  00CCH  NOT USED
+TMOD . . . . . . . . . . . . . . . .  D  ADDR  0089H  NOT USED
+TR0. . . . . . . . . . . . . . . . .  B  ADDR  008CH  NOT USED
+TR1. . . . . . . . . . . . . . . . .  B  ADDR  008EH  NOT USED
+TR2. . . . . . . . . . . . . . . . .  B  ADDR  00CAH  NOT USED
+TXD. . . . . . . . . . . . . . . . .  B  ADDR  00B1H  NOT USED
+WDTCON . . . . . . . . . . . . . . .  D  ADDR  00A7H  NOT USED
+WDTPRG . . . . . . . . . . . . . . .  D  ADDR  00A7H  NOT USED
+WDTRST . . . . . . . . . . . . . . .  D  ADDR  00A6H  NOT USED
+WR . . . . . . . . . . . . . . . . .  B  ADDR  00B6H  NOT USED
