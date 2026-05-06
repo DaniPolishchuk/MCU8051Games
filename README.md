@@ -1,119 +1,119 @@
 # Snake - 8051 Assembly (MCU 8051 IDE)
 
-Ein Snake-Spiel in 8051 Assembly, das im MCU 8051 IDE Simulator laeuft.
+A Snake game written in 8051 Assembly, running in the MCU 8051 IDE Simulator.
 
 ## Features
 
-- 8x8 LED-Matrix Spielfeld
-- Gruene Schlange, rotes Futter (Dual-Color durch IDE-Patch)
-- Steuerung ueber Pfeiltasten / WASD (durch IDE-Patch)
-- Kein Flackern dank persistenter LED-Zustaende (durch IDE-Patch)
-- Auto-Reset bei Kollision (Wand oder Selbst)
-- Schlange waechst beim Fressen
-- Pseudo-Zufalls Futter-Platzierung (LFSR)
+- 8x8 LED matrix playing field
+- Green snake, red food (dual-color via IDE patch)
+- Arrow keys / WASD control (via IDE patch)
+- Flicker-free display thanks to persistent LED states (via IDE patch)
+- Auto-reset on collision (wall or self)
+- Snake grows when eating food
+- Pseudo-random food placement (LFSR)
 
-## Hardware-Konfiguration im Simulator
+## Simulator Hardware Configuration
 
 ### LED Matrix (8x8)
 
-| Parameter | Wert |
-|-----------|------|
+| Parameter | Value |
+|-----------|-------|
 | Columns (PORT) | 0 |
 | Columns (BIT) | 0, 1, 2, 3, 4, 5, 6, 7 |
 | Rows (PORT BIT) | Port 1, Bits 0-7 |
 | LED Condition | Row=1, Column=1 |
 | Dim Interval | 1000 |
 | Mapping | Random |
-| Farbe | Green |
+| Color | Green |
 
-### Simple Keypad (4 Tasten)
+### Simple Keypad (4 keys)
 
-| Taste | Port | Bit | Funktion |
-|-------|------|-----|----------|
-| A | 3 | 0 | Hoch |
-| B | 3 | 1 | Runter |
-| C | 3 | 2 | Links |
-| D | 3 | 3 | Rechts |
+| Key | Port | Bit | Function |
+|-----|------|-----|----------|
+| A | 3 | 0 | Up |
+| B | 3 | 1 | Down |
+| C | 3 | 2 | Left |
+| D | 3 | 3 | Right |
 
-### Port-Belegung
+### Port Assignment
 
-| Port | Funktion |
+| Port | Function |
 |------|----------|
-| P0 | LED-Matrix Columns (Schlange + Futter) |
-| P1 | LED-Matrix Rows |
-| P2 | Futter-Markierung (fuer rote Farbe, IDE-Patch) |
-| P3.0-P3.3 | Richtungstasten (aktiv low) |
+| P0 | LED matrix columns (snake + food) |
+| P1 | LED matrix rows |
+| P2 | Food marker (for red color, IDE patch) |
+| P3.0-P3.3 | Direction keys (active low) |
 
-## Spielanleitung
+## How to Play
 
-1. Projekt `Snake.mcu8051ide` in der IDE oeffnen
-2. F11 druecken (Compilieren)
-3. Virtual HW einrichten (LED Matrix + Simple Keypad, siehe oben)
-4. Simulation starten (F2, dann Run)
-5. Beliebige Taste druecken → Spiel startet
-6. Pfeiltasten / WASD zum Steuern (Keypad-Fenster muss Fokus haben)
-7. Futter (rot) fressen → Schlange waechst
-8. Wand oder sich selbst treffen → automatischer Neustart
+1. Open project `Snake.mcu8051ide` in the IDE
+2. Press F11 (Compile)
+3. Set up Virtual HW (LED Matrix + Simple Keypad, see above)
+4. Start simulation (F2, then Run)
+5. Press any key to start the game
+6. Use arrow keys / WASD to steer (Keypad window must have focus)
+7. Eat food (red) to grow the snake
+8. Hit a wall or yourself to auto-restart
 
-## IDE-Modifikationen
+## IDE Modifications
 
-Wir haben den MCU 8051 IDE Quellcode an zwei Stellen erweitert, um das Spiel
-spielbar zu machen. Ohne diese Patches funktioniert die LED-Matrix im Simulator
-nicht gut fuer Spiele (Multiplexing-Probleme, keine Tastatur-Eingabe).
+We extended the MCU 8051 IDE source code in two places to make the game
+playable. Without these patches, the LED matrix in the simulator does not
+work well for games (multiplexing issues, no keyboard input).
 
-### 1. Dual-Color LED-Matrix + Persistente Anzeige
+### 1. Dual-Color LED Matrix + Persistent Display
 
-**Datei:** `lib/pale/ledmatrix.tcl` (in der .app Bundle unter
+**File:** `lib/pale/ledmatrix.tcl` (inside the .app bundle at
 `/Applications/MCU8051IDE.app/Contents/Resources/app/lib/pale/ledmatrix.tcl`)
 
-**Problem:** Die LED-Matrix im Simulator zeigt nur den aktuellen Port-Zustand.
-Bei Multiplexing (Zeile fuer Zeile ansteuern) blinken die LEDs, weil nur die
-aktive Zeile sichtbar ist. Ausserdem unterstuetzt die Matrix nur eine Farbe.
+**Problem:** The LED matrix in the simulator only shows the current port state.
+With multiplexing (driving one row at a time), LEDs flicker because only the
+active row is visible. Additionally, the matrix only supports a single color.
 
-**Loesung:** Zwei neue Instanz-Variablen (`prev_state_green`, `prev_state_red`)
-die den LED-Zustand persistent halten:
+**Solution:** Two new instance variables (`prev_state_green`, `prev_state_red`)
+that hold the LED state persistently:
 
-- `prev_state_green(row,col)`: Wird auf 1 gesetzt wenn Row aktiv UND Column
-  aktiv (P0). Bleibt 1 bis Row erneut aktiv wird und Column dann 0 ist.
-  → Schlange leuchtet dauerhaft gruen ohne Blinken.
+- `prev_state_green(row,col)`: Set to 1 when row is active AND column is active
+  (P0). Remains 1 until the row becomes active again and the column is then 0.
+  This keeps the snake visible without flickering.
 
-- `prev_state_red(row,col)`: Wird auf 1 gesetzt wenn Row aktiv UND Port 2
-  (gleicher Pin wie Column) HIGH ist. Ueberschreibt die gruene Farbe.
-  → Futter leuchtet dauerhaft rot.
+- `prev_state_red(row,col)`: Set to 1 when row is active AND Port 2 (same pin
+  as column) is HIGH. Overrides the green color.
+  This keeps the food permanently displayed in red.
 
-**Aenderungen im Detail:**
+**Changes in detail:**
 
 ```tcl
-# Neue Instanz-Variablen
+# New instance variables
 private variable prev_state_red
 private variable prev_state_green
 
-# Initialisierung im Constructor (for-Loop bei prev_state)
+# Initialization in constructor (for-loop alongside prev_state)
 set prev_state_red($j,$i) 0
 set prev_state_green($j,$i) 0
 
-# In new_state Methode, nach dem image-Switch:
-# 1. Green-Flag setzen/loeschen wenn Row aktiv
-# 2. Green-Flag anwenden (LED dauerhaft gruen)
-# 3. Red-Flag setzen/loeschen wenn Row aktiv + P2 pruefen
-# 4. Red-Flag anwenden (ueberschreibt gruen mit rot)
+# In new_state method, after the image switch:
+# 1. Set/clear green flag when row is active
+# 2. Apply green flag (LED stays green permanently)
+# 3. Set/clear red flag when row is active + check P2
+# 4. Apply red flag (overrides green with red)
 ```
 
-### 2. Tastatur-Steuerung fuer Simple Keypad
+### 2. Keyboard Control for Simple Keypad
 
-**Datei:** `lib/pale/simplekeypad.tcl` (in der .app Bundle unter
+**File:** `lib/pale/simplekeypad.tcl` (inside the .app bundle at
 `/Applications/MCU8051IDE.app/Contents/Resources/app/lib/pale/simplekeypad.tcl`)
 
-**Problem:** Das Simple Keypad reagiert nur auf Mausklicks. Fuer ein Spiel
-braucht man Tastatur-Eingabe.
+**Problem:** The Simple Keypad only responds to mouse clicks. A game requires
+keyboard input.
 
-**Loesung:** Keyboard-Bindings fuer Pfeiltasten und WASD, plus zwei neue
-Methoden `key_down` (Taste druecken) und `key_up` (Taste loslassen).
+**Solution:** Keyboard bindings for arrow keys and WASD, plus two new methods
+`key_down` (press key) and `key_up` (release key).
 
-**Aenderungen im Detail:**
+**Changes in detail:**
 
 ```tcl
-# Am Ende von create_gui, nach bindtags:
+# At the end of create_gui, after bindtags:
 foreach w [list $win .] {
     bind $w <KeyPress-Up>      "$this key_down 0"
     bind $w <KeyRelease-Up>    "$this key_up 0"
@@ -133,76 +133,77 @@ foreach w [list $win .] {
     bind $w <KeyRelease-d>     "$this key_up 3"
 }
 
-# Neue Methoden:
-public method key_down {i}  ;# Taste momentan druecken
-public method key_up {i}    ;# Taste loslassen
+# New methods:
+public method key_down {i}  ;# Momentary key press
+public method key_up {i}    ;# Key release
 ```
 
 **Mapping:**
-- Taste 0 (↑/W) → Key A → P3.0
-- Taste 1 (↓/S) → Key B → P3.1
-- Taste 2 (←/A) → Key C → P3.2
-- Taste 3 (→/D) → Key D → P3.3
+- Key 0 (Up/W) -> Key A -> P3.0
+- Key 1 (Down/S) -> Key B -> P3.1
+- Key 2 (Left/A) -> Key C -> P3.2
+- Key 3 (Right/D) -> Key D -> P3.3
 
-**Hinweis:** Das Simple Keypad Fenster muss den Fokus haben damit die
-Tastatur-Events ankommen. Die Bindings werden auch auf das Root-Fenster (`.`)
-gesetzt, sodass es oft auch ohne expliziten Fokus funktioniert.
+**Note:** The Simple Keypad window must have focus for keyboard events to
+register. The bindings are also set on the root window (`.`), so it often
+works without explicit focus as well.
 
-## Technische Details (Assembly)
+## Technical Details (Assembly)
 
-### Speicher-Layout
+### Memory Layout
 
-| Adresse | Inhalt |
-|---------|--------|
-| 30h-39h | Spielvariablen (Richtung, Laenge, Score, etc.) |
-| 40h-47h | Spielfeld (8 Bytes, Schlange) |
-| 48h-5Bh | Schlangen-Ring-Buffer (max 20 Segmente) |
-| 5Ch-63h | Futter-Feld (8 Bytes) |
+| Address | Contents |
+|---------|----------|
+| 30h-39h | Game variables (direction, length, score, etc.) |
+| 40h-47h | Playing field (8 bytes, snake) |
+| 48h-5Bh | Snake ring buffer (max 20 segments) |
+| 5Ch-63h | Food field (8 bytes) |
 | 70h+ | Stack |
 
-### Spielfeld-Darstellung
+### Playing Field Representation
 
-Jedes Segment der Schlange wird als Byte gespeichert: High-Nibble = X (0-7),
-Low-Nibble = Y (0-7). Der Ring-Buffer erlaubt effizientes Wachsen ohne
-Verschieben.
+Each snake segment is stored as a byte: high nibble = X (0-7),
+low nibble = Y (0-7). The ring buffer allows efficient growth without
+shifting data.
 
-### Hauptschleife
+### Main Loop
 
 ```
 MAIN_LP:
-    READ_INPUT        ← Tasten bei jedem Durchlauf lesen
-    DISPLAY_ROW       ← Eine Zeile ausgeben
-    MUX_WAIT          ← Kurz warten (50 NOPs)
-    Naechste Zeile
-    Nach 8 Zeilen: GAME_LOGIC + BUILD_FIELD
+    READ_INPUT        <- Read keys every iteration
+    DISPLAY_ROW       <- Output one row
+    MUX_WAIT          <- Short delay (50 NOPs)
+    Next row
+    After 8 rows: GAME_LOGIC + BUILD_FIELD
 ```
 
-Kein Timer-Interrupt. Alles synchron in der Hauptschleife. Das vermeidet
-Race-Conditions und funktioniert zuverlaessig im Simulator.
+No timer interrupts. Everything runs synchronously in the main loop. This
+avoids race conditions and works reliably in the simulator.
 
 ### Multiplexing
 
-Das Display wird zeilenweise angesteuert (P1 = eine Zeile aktiv, P0 = Spalten).
-Dank der IDE-Patches bleibt jede LED persistent sichtbar bis sie explizit
-geloescht wird.
+The display is driven row by row (P1 = one row active, P0 = columns).
+Thanks to the IDE patches, each LED remains persistently visible until
+explicitly cleared.
 
-## Dateien
+## Files
 
-| Datei | Beschreibung |
-|-------|-------------|
-| `snake.asm` | Spiel-Quellcode (8051 Assembly) |
-| `Snake.mcu8051ide` | IDE-Projektdatei |
-| `ANLEITUNG.txt` | Kurze Einrichtungsanleitung |
+| File | Description |
+|------|-------------|
+| `snake.asm` | Game source code (8051 Assembly) |
+| `Snake.mcu8051ide` | IDE project file |
+| `snakeLEDMetrix.vhc` | LED matrix virtual hardware config |
+| `snakeSimpleKeypad.vhc` | Simple keypad virtual hardware config |
 
-## Voraussetzungen
+## Requirements
 
-- MCU 8051 IDE (macOS Build von github.com/paulscalise1/mcu8051ide-macOS)
-- Die oben beschriebenen Patches muessen in der installierten .app angewendet sein
+- MCU 8051 IDE (macOS build from github.com/paulscalise1/mcu8051ide-macOS)
+- The IDE patches described above must be applied to the installed .app
 - Processor: AT89S52, Clock: 12 MHz
 
-## Bekannte Einschraenkungen
+## Known Limitations
 
-- Die Tastatur-Eingabe erfordert manchmal laengeres Druecken je nach
-  Simulator-Geschwindigkeit
-- Score ist nur im RAM-Fenster sichtbar (Adresse 39h)
-- Maximale Schlangenlaenge: 20 Segmente
+- Keyboard input sometimes requires holding the key briefly depending on
+  simulator speed
+- Score is only visible in the RAM window (address 39h)
+- Maximum snake length: 20 segments
